@@ -1,29 +1,51 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
   <head>
-    <title><%= content_for(:title) || "Watermarker" %></title>
+    <title><%= content_for(:title) || "DJI Watermarker" %></title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="application-name" content="Watermarker">
+    <meta name="application-name" content="DJI Watermarker">
     <meta name="mobile-web-app-capable" content="yes">
     <%= csrf_meta_tags %>
     <%= csp_meta_tag %>
 
     <%= yield :head %>
 
-    <%# Enable PWA manifest for installable apps (make sure to enable in config/routes.rb too!) %>
-    <%#= tag.link rel: "manifest", href: pwa_manifest_path(format: :json) %>
-
     <link rel="icon" href="/icon.png" type="image/png">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icon.png">
 
-    <%# Includes all stylesheet files in app/assets/stylesheets %>
     <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
     <%= javascript_importmap_tags %>
   </head>
 
   <body>
-    <%= yield %>
+    <header class="navbar">
+      <div class="container navbar-inner">
+        <%= link_to root_path, class: "brand" do %>
+          <% if Rails.root.join("app/assets/images/iat_logo.png").exist? %>
+            <%= image_tag "iat_logo.png", alt: "Logo", class: "brand-logo" %>
+          <% end %>
+          <div>
+            <span class="brand-title">DJI Watermarker</span>
+            <span class="brand-subtitle">Carimbador de Fotos de Vistoria Aérea (SIRGAS 2000 / UTM)</span>
+          </div>
+        <% end %>
+        <nav class="nav-actions">
+          <%= link_to "Vistorias", inspections_path, class: "btn btn-secondary" %>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container main-content">
+      <% if notice.present? %>
+        <div class="flash flash-notice"><%= notice %></div>
+      <% end %>
+      <% if alert.present? %>
+        <div class="flash flash-alert"><%= alert %></div>
+      <% end %>
+
+      <%= yield %>
+    </main>
   </body>
 </html>

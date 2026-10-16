@@ -1,0 +1,163 @@
+<div class="header-bar">
+  <div>
+    <h1 style="margin: 0; font-size: 1.65rem;"><%= @inspection.title %></h1>
+    <div style="color: var(--text-secondary); font-size: 0.92rem; margin-top: 0.25rem;">
+      <% if @inspection.protocol.present? %>
+        Protocolo: <strong style="color: var(--text-primary);"><%= @inspection.protocol %></strong> •
+      <% end %>
+      <%= @photos.size %> foto(s) processada(s) • Criada em <%= @inspection.created_at.strftime("%d/%m/%Y às %H:%M") %>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+    <% if @photos.any? %>
+      <%= link_to "Baixar Todas em ZIP (#{@photos.size})", download_zip_inspection_path(@inspection), class: "btn btn-primary", data: { turbo: false } %>
+    <% end %>
+    <%= link_to "Voltar", inspections_path, class: "btn btn-secondary" %>
+    <%= button_to "Excluir Vistoria", inspection_path(@inspection), method: :delete, data: { turbo_confirm: "Tem certeza que deseja excluir esta vistoria e todas as suas fotos?" }, class: "btn btn-danger" %>
+  </div>
+</div>
+
+<section class="card" style="margin-bottom: 2rem;">
+  <h3 class="card-title" style="font-size: 1.05rem;">Adicionar Mais Fotos em Lote</h3>
+  <%= form_with url: upload_photos_inspection_path(@inspection), method: :post, local: true, data: { turbo: false }, html: { multipart: true, id: "add-photos-form", style: "display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;" } do |f| %>
+    <div style="flex: 1; min-width: 260px;">
+      <%= file_field_tag "photo_files[]", multiple: true, required: true, accept: "image/jpeg,image/jpg,image/png", class: "form-input", id: "more-photos-input" %>
+    </div>
+    <button type="submit" class="btn btn-primary" id="more-photos-btn">
+      Enviar e Carimbar Fotos
+    </button>
+  <% end %>
+  <div id="more-progress-box" style="display: none; margin-top: 1rem;">
+    <div id="more-progress-text" style="font-size: 0.9rem; color: var(--accent); margin-bottom: 0.4rem; font-weight: 600;">Processando...</div>
+    <div style="width: 100%; height: 10px; background: #0f172a; border-radius: 999px; overflow: hidden; border: 1px solid var(--border-color);">
+      <div id="more-progress-bar" style="width: 0%; height: 100%; background: var(--accent); transition: width 0.2s;"></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  function extractExifHeaderBlob(file) {
+    return file.slice(0, Math.min(file.size, 262144), "application/octet-stream");
+  }
+
+  async function preparePhotoForUpload(file) {
+    if (file.size <= 12 * 1024 * 1024) {
+      return { mainFile: file, exifBlob: null };
+    }
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    const compressedFile = new File([blob], file.name, { type: "image/jpeg" });
+    return { mainFile: compressedFile, exifBlob: extractExifHeaderBlob(file) };
+  }
+
+  document.getElementById("add-photos-form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+    const form = e.target;
+    const btn = document.getElementById("more-photos-btn");
+    const box = document.getElementById("more-progress-box");
+    const text = document.getElementById("more-progress-text");
+    const bar = document.getElementById("more-progress-bar");
+    const files = Array.from(document.getElementById("more-photos-input").files);
+    const csrfToken = document.querySelector("meta[name='csrf-token']")?.content;
+
+    btn.disabled = true;
+    box.style.display = "block";
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        bar.style.width = Math.round((i / files.length) * 100) + "%";
+        text.innerText = `Processando foto ${i + 1} de ${files.length}: ${file.name}...`;
+
+        const { mainFile, exifBlob } = await preparePhotoForUpload(file);
+        const fd = new FormData();
+        fd.append("photo_files[]", mainFile);
+        if (exifBlob) {
+          fd.append("exif_headers[]", exifBlob, file.name);
+        }
+
+        const res = await fetch(form.action, {
+          method: "POST",
+          headers: { "Accept": "application/json", "X-CSRF-Token": csrfToken },
+          body: fd
+        });
+
+        if (!res.ok) {
+          throw new Error(`Erro ao enviar ${file.name} (HTTP ${res.status})`);
+        }
+      }
+      bar.style.width = "100%";
+      text.innerText = "Concluído! Atualizando página...";
+      window.location.reload();
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      box.style.display = "none";
+    }
+  });
+</script>
+
+<% if @photos.any? %>
+  <div class="photos-grid">
+    <% @photos.each do |photo| %>
+      <article class="photo-card">
+        <% if photo.watermarked_image.attached? %>
+          <%= link_to url_for(photo.watermarked_image), target: "_blank", rel: "noopener" do %>
+            <%= image_tag photo.watermarked_image, class: "photo-preview", loading: "lazy", alt: photo.filename %>
+          <% end %>
+        <% end %>
+
+        <div class="photo-body">
+          <div>
+            <h4 class="photo-title"><%= photo.filename %></h4>
+            <table class="meta-table">
+              <% if photo.captured_at.present? %>
+                <tr>
+                  <td>Data/Hora:</td>
+                  <td><%= photo.captured_at.strftime("%d/%m/%Y %H:%M:%S") %></td>
+                </tr>
+              <% end %>
+              <tr>
+                <td>Lat / Lon:</td>
+                <td><%= format("%.6f", photo.latitude || 0) %>, <%= format("%.6f", photo.longitude || 0) %></td>
+              </tr>
+              <% if photo.utm_zone.present? %>
+                <tr>
+                  <td>UTM (SIRGAS 2000):</td>
+                  <td><strong><%= photo.utm_zone %></strong> — <%= format("%.2f", photo.utm_easting) %> E, <%= format("%.2f", photo.utm_northing) %> N</td>
+                </tr>
+              <% end %>
+              <tr>
+                <td>Altitudes:</td>
+                <td>Rel: <%= format("%.1f", photo.relative_altitude || 0) %>m | Abs: <%= format("%.1f", photo.absolute_altitude || 0) %>m</td>
+              </tr>
+              <tr>
+                <td>Orientação:</td>
+                <td>Azimute: <%= format("%.1f", photo.gimbal_yaw || 0) %>° | Inclinação: <%= format("%.1f", photo.gimbal_pitch || 0) %>°</td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="photo-actions">
+            <% if photo.watermarked_image.attached? %>
+              <%= link_to "Baixar JPG", download_inspection_photo_path(@inspection, photo), class: "btn btn-primary", style: "padding: 0.45rem 0.9rem; font-size: 0.85rem;", data: { turbo: false } %>
+              <%= link_to "Ver Tamanho Real", url_for(photo.watermarked_image), target: "_blank", rel: "noopener", class: "btn btn-secondary", style: "padding: 0.45rem 0.9rem; font-size: 0.85rem;" %>
+            <% end %>
+            <%= button_to "Remover", inspection_photo_path(@inspection, photo), method: :delete, class: "btn btn-danger", style: "padding: 0.45rem 0.75rem; font-size: 0.82rem;" %>
+          </div>
+        </div>
+      </article>
+    <% end %>
+  </div>
+<% else %>
+  <div class="card" style="text-align: center; padding: 3rem 1.5rem; color: var(--text-secondary);">
+    Nenhuma foto adicionada a esta vistoria ainda. Utilize o campo acima para enviar fotos em lote.
+  </div>
+<% end %>

@@ -1,0 +1,25 @@
+# Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
+
+one:
+  inspection: one
+  filename: MyString
+  captured_at: 2026-10-16 16:35:31
+   latitude: 1.5
+  longitude: 1.5
+  relative_altitude: 1.5
+  absolute_altitude: 1.5
+   gimbal_yaw: 1.5
+  gimbal_pitch: 1.5
+  fov_deg: 1.5
+
+two:
+  inspection: two
+  filename: MyString
+  captured_at: 2026-10-16 16:35:31
+   latitude: 1.5
+  longitude: 1.5
+  relative_altitude: 1.5
+  absolute_altitude: 1.5
+   gimbal_yaw: 1.5
+  gimbal_pitch: 1.5
+  fov_deg: 1.5

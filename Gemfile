@@ -66,7 +66,9 @@ group :test do
 end
 
 group :image_processing do
-  gem "image_processing"
   gem "mini_exiftool"
 end
 
+gem "geoutm"
+gem "ruby-vips"
+gem "rubyzip"

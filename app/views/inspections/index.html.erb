@@ -1,0 +1,182 @@
+<div class="grid-2">
+  <section class="card">
+    <h2 class="card-title">Nova Vistoria (Processamento em Lote)</h2>
+    <p class="card-subtitle">
+      Crie uma vistoria e envie múltiplas fotos de drone DJI para extrair metadados EXIF/GPS/UTM e gerar as imagens carimbadas automaticamente.
+    </p>
+
+    <% if @inspection.errors.any? %>
+      <div class="flash flash-alert">
+        <% @inspection.errors.full_messages.each do |msg| %>
+          <div><%= msg %></div>
+        <% end %>
+      </div>
+    <% end %>
+
+    <%= form_with model: @inspection, local: true, data: { turbo: false }, html: { multipart: true, id: "new-inspection-form" } do |f| %>
+      <div class="form-group">
+        <%= f.label :title, "Título / Identificação da Vistoria *", class: "form-label" %>
+        <%= f.text_field :title, placeholder: "Ex: Fiscalização Ambiental — Área Rural PR", required: true, class: "form-input" %>
+      </div>
+
+      <div class="form-group">
+        <%= f.label :protocol, "Protocolo (Opcional)", class: "form-label" %>
+        <%= f.text_field :protocol, placeholder: "Ex: 21.000.000-0", class: "form-input" %>
+      </div>
+
+      <div class="form-group">
+        <%= f.label :photo_files, "Fotos do Drone (Seleção em Lote)", class: "form-label" %>
+        <div class="dropzone">
+          <%= f.file_field :photo_files, multiple: true, accept: "image/jpeg,image/jpg,image/png", class: "form-input", id: "batch-photo-input", onchange: "const hint = document.getElementById('file-count-hint'); if (this.files.length > 0) { hint.innerText = this.files.length + ' arquivo(s) selecionado(s) pronto(s) para envio.'; hint.style.color = '#38bdf8'; }" %>
+          <span class="form-hint" id="file-count-hint">Selecione vários arquivos JPG/JPEG de uma só vez. O fuso UTM (SIRGAS 2000) será detectado automaticamente.</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <%= f.label :custom_logo, "Logo Personalizada (Opcional)", class: "form-label" %>
+        <%= f.file_field :custom_logo, accept: "image/png,image/jpeg", class: "form-input" %>
+        <span class="form-hint">Se deixado em branco, utiliza a logo padrão local (se configurada) ou gera o rodapé sem logo.</span>
+      </div>
+
+      <div id="upload-progress-box" style="display: none; margin-bottom: 1.2rem;">
+        <div id="upload-progress-text" style="font-size: 0.9rem; color: var(--accent); margin-bottom: 0.4rem; font-weight: 600;">Preparando envio...</div>
+        <div style="width: 100%; height: 10px; background: #0f172a; border-radius: 999px; overflow: hidden; border: 1px solid var(--border-color);">
+          <div id="upload-progress-bar" style="width: 0%; height: 100%; background: var(--accent); transition: width 0.2s;"></div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block" id="submit-btn">
+        Criar Vistoria e Processar Lote
+      </button>
+    <% end %>
+
+    <script>
+      // Extract the JPEG APP1 (EXIF/XMP) header segments (first 256 KB is more than enough for all DJI EXIF/XMP tags)
+      function extractExifHeaderBlob(file) {
+        return file.slice(0, Math.min(file.size, 262144), "application/octet-stream");
+      }
+
+      // If a file is > 12 MB, GitHub Codespaces proxy may reject it with 413.
+      // Re-encode via HTMLCanvasElement at Q=0.92 (reduces 36MB -> ~6MB with full 8064x4536 resolution)
+      async function preparePhotoForUpload(file) {
+        if (file.size <= 12 * 1024 * 1024) {
+          return { mainFile: file, exifBlob: null };
+        }
+        const bitmap = await createImageBitmap(file);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.92));
+        const compressedFile = new File([blob], file.name, { type: "image/jpeg" });
+        return { mainFile: compressedFile, exifBlob: extractExifHeaderBlob(file) };
+      }
+
+      document.getElementById("new-inspection-form").addEventListener("submit", async function(e) {
+        e.preventDefault();
+        const form = e.target;
+        const submitBtn = document.getElementById("submit-btn");
+        const progressBox = document.getElementById("upload-progress-box");
+        const progressText = document.getElementById("upload-progress-text");
+        const progressBar = document.getElementById("upload-progress-bar");
+        const fileInput = document.getElementById("batch-photo-input");
+        const files = Array.from(fileInput.files);
+        const csrfToken = document.querySelector("meta[name='csrf-token']")?.content;
+
+        submitBtn.disabled = true;
+        progressBox.style.display = "block";
+        progressText.innerText = "Criando vistoria...";
+
+        const createData = new FormData();
+        createData.append("inspection[title]", form.querySelector("[name='inspection[title]']").value);
+        createData.append("inspection[protocol]", form.querySelector("[name='inspection[protocol]']").value);
+        const logoInput = form.querySelector("[name='inspection[custom_logo]']");
+        if (logoInput.files.length > 0) {
+          createData.append("inspection[custom_logo]", logoInput.files[0]);
+        }
+
+        try {
+          const createRes = await fetch(form.action, {
+            method: "POST",
+            headers: { "Accept": "application/json", "X-CSRF-Token": csrfToken },
+            body: createData
+          });
+
+          if (!createRes.ok) {
+            throw new Error("Falha ao criar vistoria (HTTP " + createRes.status + ")");
+          }
+
+          const inspection = await createRes.json();
+
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const pct = Math.round((i / files.length) * 100);
+            progressBar.style.width = pct + "%";
+            progressText.innerText = `Processando foto ${i + 1} de ${files.length}: ${file.name}...`;
+
+            const { mainFile, exifBlob } = await preparePhotoForUpload(file);
+            const photoData = new FormData();
+            photoData.append("photo_files[]", mainFile);
+            if (exifBlob) {
+              photoData.append("exif_headers[]", exifBlob, file.name);
+            }
+
+            const upRes = await fetch(inspection.upload_url, {
+              method: "POST",
+              headers: { "Accept": "application/json", "X-CSRF-Token": csrfToken },
+              body: photoData
+            });
+
+            if (!upRes.ok) {
+              throw new Error(`Erro ao enviar ${file.name} (HTTP ${upRes.status})`);
+            }
+          }
+
+          progressBar.style.width = "100%";
+          progressText.innerText = "Concluído! Redirecionando...";
+          window.location.href = inspection.url;
+        } catch (err) {
+          alert(err.message);
+          submitBtn.disabled = false;
+          progressBox.style.display = "none";
+        }
+      });
+    </script>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">Vistorias Realizadas</h2>
+    <p class="card-subtitle">Acesse os lotes processados para visualizar ou baixar todas as fotos em ZIP.</p>
+
+    <% if @inspections.any? %>
+      <div class="inspection-list">
+        <% @inspections.each do |inspection| %>
+          <div class="inspection-item">
+            <div>
+              <%= link_to inspection.title, inspection_path(inspection), style: "color: var(--text-primary); font-weight: 700; text-decoration: none; font-size: 1.05rem;" %>
+              <div class="inspection-meta">
+                <% if inspection.protocol.present? %>
+                  Protocolo: <strong><%= inspection.protocol %></strong> •
+                <% end %>
+                Criada em <%= inspection.created_at.strftime("%d/%m/%Y às %H:%M") %>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+              <span class="badge"><%= inspection.photos.size %> foto(s)</span>
+              <%= link_to "Abrir", inspection_path(inspection), class: "btn btn-secondary" %>
+              <% if inspection.photos.any? %>
+                <%= link_to "ZIP", download_zip_inspection_path(inspection), class: "btn btn-primary", data: { turbo: false } %>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% else %>
+      <p style="color: var(--text-secondary); text-align: center; padding: 2rem 0;">
+        Nenhuma vistoria cadastrada ainda. Use o formulário ao lado para iniciar seu primeiro lote.
+      </p>
+    <% end %>
+  </section>
+</div>
